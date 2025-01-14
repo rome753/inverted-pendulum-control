@@ -13,16 +13,17 @@
 </head>
 
 <body>
-	<div id="info">Ammo.js physics soft body rope demo<br>Press Q or A to move the arm.</div>
+	<div id="info">Ammo.js physics inverted pedulum control<br>Press WASD to move the cube.</div>
 	<div id="container"></div>
 
 	<script src="jsm/libs/ammo.wasm.js"></script>
 
 	<script src="https://d3js.org/d3.v7.min.js"></script>
 	<script src="diagram.js"></script>
+	<script src="pid_control.js"></script>
 	<div id="angleChart"></div>
 
-    <script type="importmap">
+	<script type="importmap">
 		{
 			"imports": {
 				"three": "./jsm/libs/three.module.js",
@@ -386,8 +387,6 @@
 			renderer.render(scene, camera);
 		}
 
-
-
 		function render() {
 
 			const deltaTime = clock.getDelta();
@@ -445,127 +444,24 @@
 				z: euler.z
 			};
 		}
-		const pid = {
-			// 角度控制PID参数
-			// kp: 800,  // 比例系数
-			// ki: 50,  // 积分系数
-			// kd: 800,   // 微分系数
 
-			// kp: 800,  // 比例系数
-			// ki: 50,  // 积分系数
-			// kd: 5000,   // 微分系数
-			// // 位置控制PID参数
-			// kp_pos: 30,
-			// ki_pos: 0.001,
-			// kd_pos: 800,	
-
-			kp: 800,  // 比例系数
-			ki: 0,  // 积分系数
-			kd: 10000,   // 微分系数
-			// 位置控制PID参数
-			kp_pos: 25,
-			ki_pos: 0,
-			kd_pos: 1000,
-
-
-			lastError: 0,
-			integral: 0,
-			derivative: 0,
-
-			lastError1: 0,
-			integral1: 0,
-			derivative1: 0,
-
-			// 目标值
-			targetAngle: 0,
-			targetPos: 0,
-
-
-			// z轴角度控制参数
-			kp_angleZ: 800,
-			ki_angleZ: 0,
-			kd_angleZ: 10000,
-
-			// x轴位置控制参数
-			kp_posX: 25,
-			ki_posX: 0,
-			kd_posX: 1000,
-
-			// z轴角度PID状态
-			lastErrorZ: 0,
-			integralZ: 0,
-			derivativeZ: 0,
-
-			// x轴位置PID状态
-			lastErrorX: 0,
-			integralX: 0,
-			derivativeX: 0,
-
-			// 新增目标值
-			targetAngleZ: 0,
-			targetPosX: 0
-		};
+		var pid = new PID();
 
 		function control() {
 			const angle = getStickAngle();
 			const pos = cubeBody.getWorldTransform().getOrigin();
 			const vel = cubeBody.getLinearVelocity();
-
 			// 更新图表
 			chart.update(clock.getElapsedTime(), angle.x);
 
-			// 角度控制
-			const angleError = angle.x - pid.targetAngle;
-			pid.integral += angleError;
-			pid.derivative = angleError - pid.lastError;
-			pid.lastError = angleError;
-
-			const angleOutput = pid.kp * angleError +
-				pid.ki * pid.integral +
-				pid.kd * pid.derivative;
-
-			// 位置控制
-			const pz = pos.z();
-			const posError = pz;
-			pid.integral1 += posError;
-			pid.derivative1 = posError - pid.lastError1;
-			pid.lastError1 = posError;
-
-			var posOutput = pid.kp_pos * posError +
-				pid.ki_pos * pid.integral1 +
-				pid.kd_pos * pid.derivative1;
-
-
-			// Z轴角度控制
-			const angleErrorZ = angle.z - pid.targetAngleZ;
-			pid.integralZ += angleErrorZ;
-			pid.derivativeZ = angleErrorZ - pid.lastErrorZ;
-			pid.lastErrorZ = angleErrorZ;
-
-			const angleOutputZ = pid.kp_angleZ * angleErrorZ +
-				pid.ki_angleZ * pid.integralZ +
-				pid.kd_angleZ * pid.derivativeZ;
-
-			// X轴位置控制
-			const px = pos.x();
-			const posErrorX = px - pid.targetPosX;
-			pid.integralX += posErrorX;
-			pid.derivativeX = posErrorX - pid.lastErrorX;
-			pid.lastErrorX = posErrorX;
-
-			var posOutputX = pid.kp_posX * posErrorX +
-				pid.ki_posX * pid.integralX +
-				pid.kd_posX * pid.derivativeX;
+			var f = pid.control(angle, pos, vel);
 
 			// 合成控制力
-			const force = new Ammo.btVector3(0, 0, 0);
-			force.setX(-angleOutputZ + posOutputX); // X方向力 = Z轴角度控制 + X轴位置控制
-			force.setZ(angleOutput + posOutput);   // Z方向力 = X轴角度控制 + Z轴位置控制
+			const force = new Ammo.btVector3(f.fx, 0, f.fz);
 			cubeBody.applyCentralForce(force);
 
 			console.log('angle:', angle.z, 'pos:', pos.x(), 'vel:', vel.x());
 		}
-
 	</script>
 
 </body>
