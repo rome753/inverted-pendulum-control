@@ -1,0 +1,573 @@
+<html lang="en">
+
+<head>
+	<title>Amjs softbody rope demo</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<link type="text/css" rel="stylesheet" href="main.css">
+	<style>
+		body {
+			color: #333;
+		}
+	</style>
+</head>
+
+<body>
+	<div id="info">Ammo.js physics soft body rope demo<br>Press Q or A to move the arm.</div>
+	<div id="container"></div>
+
+	<script src="jsm/libs/ammo.wasm.js"></script>
+
+	<script src="https://d3js.org/d3.v7.min.js"></script>
+	<script src="diagram.js"></script>
+	<div id="angleChart"></div>
+
+    <script type="importmap">
+		{
+			"imports": {
+				"three": "./jsm/libs/three.module.js",
+				"OrbitControls": "./jsm/libs/OrbitControls.js"
+			}
+		}
+	</script>
+
+	<script type="module">
+		import * as THREE from 'three';
+		import { OrbitControls } from 'OrbitControls';
+
+		// Graphics variables
+		let container;
+		let camera, controls, scene, renderer;
+		let textureLoader;
+		const clock = new THREE.Clock();
+
+		// Physics variables
+		const gravityConstant = - 9.8;
+		let collisionConfiguration;
+		let dispatcher;
+		let broadphase;
+		let solver;
+		let softBodySolver;
+		let physicsWorld;
+		const rigidBodies = [];
+		const margin = 0.05;
+		let hinge;
+		let rope;
+		let transformAux1;
+
+		let armMovement = 0;
+
+		let cube;
+		let cubeBody;
+		let stick;
+		let stickBody;
+
+		let controlTimer;
+
+		// 创建图表实例
+		const chart = new Diagram('angleChart');
+
+		Ammo().then(function (AmmoLib) {
+
+			Ammo = AmmoLib;
+
+			init();
+			animate();
+
+		});
+
+		function init() {
+
+			initGraphics();
+
+			initPhysics();
+
+			createObjects();
+
+			initInput();
+
+			initControl();
+		}
+
+		function initControl() {
+			// 启动定时器
+			controlTimer = setInterval(control, 100);
+
+			// 清理定时器
+			window.addEventListener('unload', () => {
+				if (controlTimer) {
+					clearInterval(controlTimer);
+				}
+			});
+		}
+
+		function initGraphics() {
+
+			container = document.getElementById('container');
+			// 设置正交相机参数
+			const frustumSize = 20;
+			const aspect = window.innerWidth / window.innerHeight;
+
+			camera = new THREE.OrthographicCamera(
+				frustumSize * aspect / -2,  // left
+				frustumSize * aspect / 2,   // right
+				frustumSize / 2,            // top
+				frustumSize / -2,           // bottom
+				0.2,                        // near
+				2000                        // far
+			);
+
+			// 调整相机位置使场景可见
+			camera.position.set(-50, 100, 0);
+
+			scene = new THREE.Scene();
+			scene.background = new THREE.Color(0xbfd1e5);
+
+
+			renderer = new THREE.WebGLRenderer({ antialias: true });
+			renderer.setPixelRatio(window.devicePixelRatio);
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			renderer.shadowMap.enabled = true;
+			container.appendChild(renderer.domElement);
+
+			controls = new OrbitControls(camera, renderer.domElement);
+			controls.target.set(0, 2, 0);
+			controls.update();
+
+			textureLoader = new THREE.TextureLoader();
+
+			const ambientLight = new THREE.AmbientLight(0xbbbbbb);
+			scene.add(ambientLight);
+
+			const light = new THREE.DirectionalLight(0xffffff, 3);
+			light.position.set(- 10, 10, 5);
+			light.castShadow = true;
+			const d = 10;
+			light.shadow.camera.left = - d;
+			light.shadow.camera.right = d;
+			light.shadow.camera.top = d;
+			light.shadow.camera.bottom = - d;
+
+			light.shadow.camera.near = 2;
+			light.shadow.camera.far = 50;
+
+			light.shadow.mapSize.x = 1024;
+			light.shadow.mapSize.y = 1024;
+
+			scene.add(light);
+
+			window.addEventListener('resize', onWindowResize);
+
+		}
+
+		function initPhysics() {
+
+			// Physics configuration
+
+			collisionConfiguration = new Ammo.btSoftBodyRigidBodyCollisionConfiguration();
+			dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
+			broadphase = new Ammo.btDbvtBroadphase();
+			solver = new Ammo.btSequentialImpulseConstraintSolver();
+			physicsWorld = new Ammo.btSoftRigidDynamicsWorld(dispatcher, broadphase, solver, collisionConfiguration, softBodySolver);
+			physicsWorld.setGravity(new Ammo.btVector3(0, gravityConstant, 0));
+			physicsWorld.getWorldInfo().set_m_gravity(new Ammo.btVector3(0, gravityConstant, 0));
+
+			transformAux1 = new Ammo.btTransform();
+
+		}
+
+		function createObjects() {
+
+			const pos = new THREE.Vector3();
+			const quat = new THREE.Quaternion();
+
+			// Ground
+			pos.set(0, - 0.5, 0);
+			quat.set(0, 0, 0, 1);
+			const ground = createParalellepiped(400, 1, 400, 0, pos, quat, new THREE.MeshPhongMaterial({ color: 0xFFFFFF }));
+			ground.castShadow = true;
+			ground.receiveShadow = true;
+			textureLoader.load('textures/grid.png', function (texture) {
+
+				texture.colorSpace = THREE.SRGBColorSpace;
+				texture.wrapS = THREE.RepeatWrapping;
+				texture.wrapT = THREE.RepeatWrapping;
+				texture.repeat.set(40, 40);
+				ground.material.map = texture;
+				ground.material.needsUpdate = true;
+
+			});
+
+
+			const CUBE_SIZE = 1;
+
+			// 创建THREE.js立方体
+			const cubeGeometry = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
+			const cubeMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+			cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+			cube.position.set(0, CUBE_SIZE / 2, 0); // 调整位置，使其位于地面中心
+			scene.add(cube);
+
+			// 创建Ammo.js立方体物理体
+			const cubeShape = new Ammo.btBoxShape(new Ammo.btVector3(CUBE_SIZE / 2, CUBE_SIZE / 2, CUBE_SIZE / 2));
+			const cubeTransform = new Ammo.btTransform();
+			cubeTransform.setIdentity();
+			cubeTransform.setOrigin(new Ammo.btVector3(0, CUBE_SIZE / 2, 0));
+			const cubeMass = 1;
+			const cubeLocalInertia = new Ammo.btVector3(0, 0, 0);
+			cubeShape.calculateLocalInertia(cubeMass, cubeLocalInertia);
+			const cubeMotionState = new Ammo.btDefaultMotionState(cubeTransform);
+			const cubeRbInfo = new Ammo.btRigidBodyConstructionInfo(cubeMass, cubeMotionState, cubeShape, cubeLocalInertia);
+			cubeBody = new Ammo.btRigidBody(cubeRbInfo);
+			cubeBody.setActivationState(4); // Disable deactivation
+			cubeBody.setFriction(0.5);
+			// 创建 cubeBody 后添加:
+			const angularFactor = new Ammo.btVector3(0, 0, 0);
+			cubeBody.setAngularFactor(angularFactor);
+			physicsWorld.addRigidBody(cubeBody);
+			cube.userData.physicsBody = cubeBody;
+			rigidBodies.push(cube);
+
+			// 创建THREE.js棍子
+			const STICK_LENGTH = 10;
+			const STICK_RADIUS = 0.2;
+			const stickGeometry = new THREE.CylinderGeometry(STICK_RADIUS, STICK_RADIUS, STICK_LENGTH);
+			const stickMaterial = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
+			stick = new THREE.Mesh(stickGeometry, stickMaterial);
+			stick.position.set(0, CUBE_SIZE + STICK_LENGTH / 2, 0);
+			scene.add(stick);
+
+			// 创建Ammo.js棍子物理体
+			const stickShape = new Ammo.btCylinderShape(new Ammo.btVector3(STICK_RADIUS, STICK_LENGTH / 2, STICK_RADIUS));
+			const stickTransform = new Ammo.btTransform();
+			stickTransform.setIdentity();
+			stickTransform.setOrigin(new Ammo.btVector3(0, CUBE_SIZE + STICK_LENGTH / 2, 0));
+
+			const stickMass = 0.01;
+			const stickLocalInertia = new Ammo.btVector3(0, 0, 0);
+			stickShape.calculateLocalInertia(stickMass, stickLocalInertia);
+
+			const stickMotionState = new Ammo.btDefaultMotionState(stickTransform);
+			const stickRbInfo = new Ammo.btRigidBodyConstructionInfo(stickMass, stickMotionState, stickShape, stickLocalInertia);
+			stickBody = new Ammo.btRigidBody(stickRbInfo);
+			stickBody.setActivationState(4); // Disable deactivation
+
+			physicsWorld.addRigidBody(stickBody);
+			stick.userData.physicsBody = stickBody;
+			rigidBodies.push(stick);
+
+			// 使用D6约束替代点对点约束
+			const frameInA = new Ammo.btTransform();
+			frameInA.setIdentity();
+			frameInA.setOrigin(new Ammo.btVector3(0, CUBE_SIZE / 2, 0));
+
+			const frameInB = new Ammo.btTransform();
+			frameInB.setIdentity();
+			frameInB.setOrigin(new Ammo.btVector3(0, -STICK_LENGTH / 2, 0));
+
+			const d6 = new Ammo.btGeneric6DofConstraint(
+				cubeBody,
+				stickBody,
+				frameInA,
+				frameInB,
+				true
+			);
+
+			// 锁定Y轴旋转,允许其他方向运动
+			d6.setAngularLowerLimit(new Ammo.btVector3(-Math.PI / 2, 0, -Math.PI / 2));  // Y轴设为1表示锁定
+			d6.setAngularUpperLimit(new Ammo.btVector3(Math.PI / 2, 0, Math.PI / 2));
+
+			// 添加约束到物理世界
+			physicsWorld.addConstraint(d6, true);
+
+		}
+
+		function createParalellepiped(sx, sy, sz, mass, pos, quat, material) {
+
+			const threeObject = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz, 1, 1, 1), material);
+			const shape = new Ammo.btBoxShape(new Ammo.btVector3(sx * 0.5, sy * 0.5, sz * 0.5));
+			shape.setMargin(margin);
+
+			createRigidBody(threeObject, shape, mass, pos, quat);
+
+			return threeObject;
+
+		}
+
+		function createRigidBody(threeObject, physicsShape, mass, pos, quat) {
+
+			threeObject.position.copy(pos);
+			threeObject.quaternion.copy(quat);
+
+			const transform = new Ammo.btTransform();
+			transform.setIdentity();
+			transform.setOrigin(new Ammo.btVector3(pos.x, pos.y, pos.z));
+			transform.setRotation(new Ammo.btQuaternion(quat.x, quat.y, quat.z, quat.w));
+			const motionState = new Ammo.btDefaultMotionState(transform);
+
+			const localInertia = new Ammo.btVector3(0, 0, 0);
+			physicsShape.calculateLocalInertia(mass, localInertia);
+
+			const rbInfo = new Ammo.btRigidBodyConstructionInfo(mass, motionState, physicsShape, localInertia);
+			const body = new Ammo.btRigidBody(rbInfo);
+			body.setFriction(0.5);
+
+			threeObject.userData.physicsBody = body;
+
+			scene.add(threeObject);
+
+			if (mass > 0) {
+
+				rigidBodies.push(threeObject);
+
+				// Disable deactivation
+				body.setActivationState(4);
+
+			}
+
+			physicsWorld.addRigidBody(body);
+
+		}
+
+		// ...existing code...
+
+		function initInput() {
+
+			// 监听键盘按下事件
+			window.addEventListener('keydown', function (event) {
+				const forceMagnitude = 200;
+				const force = new Ammo.btVector3(0, 0, 0);
+				let velocity = cubeBody.getLinearVelocity();
+
+
+				if (event.keyCode === 65) { // A 左
+					force.setZ(-forceMagnitude);
+				} else if (event.keyCode === 68) { // D 右
+					force.setZ(forceMagnitude);
+				} else if (event.keyCode === 87) { // W 前
+					force.setX(forceMagnitude);
+				} else if (event.keyCode === 83) { // S 后
+					force.setX(-forceMagnitude);
+				}
+
+				cubeBody.applyCentralForce(force);
+			});
+		}
+
+		// ...existing code...
+
+		function onWindowResize() {
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+
+			renderer.setSize(window.innerWidth, window.innerHeight);
+		}
+
+		// 在动画循环中更新THREE.js立方体的位置和旋转
+		function animate() {
+			requestAnimationFrame(animate);
+
+			// 更新物理世界
+			physicsWorld.stepSimulation(1 / 60, 10);
+
+			for (let i = 0, il = rigidBodies.length; i < il; i++) {
+				const objThree = rigidBodies[i];
+				const objPhys = objThree.userData.physicsBody;
+				const ms = objPhys.getMotionState();
+				if (ms) {
+					ms.getWorldTransform(transformAux1);
+					const p = transformAux1.getOrigin();
+					const q = transformAux1.getRotation();
+					objThree.position.set(p.x(), p.y(), p.z());
+					objThree.quaternion.set(q.x(), q.y(), q.z(), q.w());
+				}
+			}
+
+			renderer.render(scene, camera);
+		}
+
+
+
+		function render() {
+
+			const deltaTime = clock.getDelta();
+
+			updatePhysics(deltaTime);
+			renderer.render(scene, camera);
+		}
+
+		function updatePhysics(deltaTime) {
+
+			// Hinge control
+			hinge.enableAngularMotor(true, 1.5 * armMovement, 50);
+
+			// Step world
+			physicsWorld.stepSimulation(deltaTime, 10);
+
+			// Update rigid bodies
+			for (let i = 0, il = rigidBodies.length; i < il; i++) {
+				const objThree = rigidBodies[i];
+				const objPhys = objThree.userData.physicsBody;
+				const ms = objPhys.getMotionState();
+				if (ms) {
+
+					ms.getWorldTransform(transformAux1);
+					const p = transformAux1.getOrigin();
+					const q = transformAux1.getRotation();
+					objThree.position.set(p.x(), p.y(), p.z());
+					objThree.quaternion.set(q.x(), q.y(), q.z(), q.w());
+
+				}
+
+			}
+
+		}
+
+		function getStickAngle() {
+			const transform = new Ammo.btTransform();
+			stickBody.getMotionState().getWorldTransform(transform);
+			const rotation = transform.getRotation();
+
+			// 将四元数转换为欧拉角
+			const euler = new THREE.Euler();
+			const quaternion = new THREE.Quaternion(
+				rotation.x(),
+				rotation.y(),
+				rotation.z(),
+				rotation.w()
+			);
+			euler.setFromQuaternion(quaternion);
+
+			// 返回弧度值
+			return {
+				x: euler.x,
+				y: euler.y,
+				z: euler.z
+			};
+		}
+		const pid = {
+			// 角度控制PID参数
+			// kp: 800,  // 比例系数
+			// ki: 50,  // 积分系数
+			// kd: 800,   // 微分系数
+
+			// kp: 800,  // 比例系数
+			// ki: 50,  // 积分系数
+			// kd: 5000,   // 微分系数
+			// // 位置控制PID参数
+			// kp_pos: 30,
+			// ki_pos: 0.001,
+			// kd_pos: 800,	
+
+			kp: 800,  // 比例系数
+			ki: 0,  // 积分系数
+			kd: 10000,   // 微分系数
+			// 位置控制PID参数
+			kp_pos: 25,
+			ki_pos: 0,
+			kd_pos: 1000,
+
+
+			lastError: 0,
+			integral: 0,
+			derivative: 0,
+
+			lastError1: 0,
+			integral1: 0,
+			derivative1: 0,
+
+			// 目标值
+			targetAngle: 0,
+			targetPos: 0,
+
+
+			// z轴角度控制参数
+			kp_angleZ: 800,
+			ki_angleZ: 0,
+			kd_angleZ: 10000,
+
+			// x轴位置控制参数
+			kp_posX: 25,
+			ki_posX: 0,
+			kd_posX: 1000,
+
+			// z轴角度PID状态
+			lastErrorZ: 0,
+			integralZ: 0,
+			derivativeZ: 0,
+
+			// x轴位置PID状态
+			lastErrorX: 0,
+			integralX: 0,
+			derivativeX: 0,
+
+			// 新增目标值
+			targetAngleZ: 0,
+			targetPosX: 0
+		};
+
+		function control() {
+			const angle = getStickAngle();
+			const pos = cubeBody.getWorldTransform().getOrigin();
+			const vel = cubeBody.getLinearVelocity();
+
+			// 更新图表
+			chart.update(clock.getElapsedTime(), angle.x);
+
+			// 角度控制
+			const angleError = angle.x - pid.targetAngle;
+			pid.integral += angleError;
+			pid.derivative = angleError - pid.lastError;
+			pid.lastError = angleError;
+
+			const angleOutput = pid.kp * angleError +
+				pid.ki * pid.integral +
+				pid.kd * pid.derivative;
+
+			// 位置控制
+			const pz = pos.z();
+			const posError = pz;
+			pid.integral1 += posError;
+			pid.derivative1 = posError - pid.lastError1;
+			pid.lastError1 = posError;
+
+			var posOutput = pid.kp_pos * posError +
+				pid.ki_pos * pid.integral1 +
+				pid.kd_pos * pid.derivative1;
+
+
+			// Z轴角度控制
+			const angleErrorZ = angle.z - pid.targetAngleZ;
+			pid.integralZ += angleErrorZ;
+			pid.derivativeZ = angleErrorZ - pid.lastErrorZ;
+			pid.lastErrorZ = angleErrorZ;
+
+			const angleOutputZ = pid.kp_angleZ * angleErrorZ +
+				pid.ki_angleZ * pid.integralZ +
+				pid.kd_angleZ * pid.derivativeZ;
+
+			// X轴位置控制
+			const px = pos.x();
+			const posErrorX = px - pid.targetPosX;
+			pid.integralX += posErrorX;
+			pid.derivativeX = posErrorX - pid.lastErrorX;
+			pid.lastErrorX = posErrorX;
+
+			var posOutputX = pid.kp_posX * posErrorX +
+				pid.ki_posX * pid.integralX +
+				pid.kd_posX * pid.derivativeX;
+
+			// 合成控制力
+			const force = new Ammo.btVector3(0, 0, 0);
+			force.setX(-angleOutputZ + posOutputX); // X方向力 = Z轴角度控制 + X轴位置控制
+			force.setZ(angleOutput + posOutput);   // Z方向力 = X轴角度控制 + Z轴位置控制
+			cubeBody.applyCentralForce(force);
+
+			console.log('angle:', angle.z, 'pos:', pos.x(), 'vel:', vel.x());
+		}
+
+	</script>
+
+</body>
+
+</html>
