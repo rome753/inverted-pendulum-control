@@ -92,7 +92,7 @@
 
 		function initControl() {
 			// 启动定时器
-			controlTimer = setInterval(control, 100);
+			controlTimer = setInterval(control, 50);
 
 			// 清理定时器
 			window.addEventListener('unload', () => {
@@ -106,7 +106,7 @@
 
 			container = document.getElementById('container');
 			// 设置正交相机参数
-			const frustumSize = 20;
+			const frustumSize = 80;
 			const aspect = window.innerWidth / window.innerHeight;
 
 			camera = new THREE.OrthographicCamera(
@@ -119,7 +119,7 @@
 			);
 
 			// 调整相机位置使场景可见
-			camera.position.set(-50, 100, 0);
+			camera.position.set(0, 100, -50);
 
 			scene = new THREE.Scene();
 			scene.background = new THREE.Color(0xbfd1e5);
@@ -200,20 +200,22 @@
 			});
 
 
-			const CUBE_SIZE = 1;
+			const CUBE_WIDTH = 1;
+			const CUBE_HEIGHT = 12;  // Increased cube height
+			const CUBE_DEPTH = 1;
 
 			// 创建THREE.js立方体
-			const cubeGeometry = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
-			const cubeMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+			const cubeGeometry = new THREE.BoxGeometry(CUBE_WIDTH, CUBE_HEIGHT, CUBE_DEPTH);
+			const cubeMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000, transparent: true, opacity: 0.8 });  // 半透明材质
 			cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
-			cube.position.set(0, CUBE_SIZE / 2, 0); // 调整位置，使其位于地面中心
+			cube.position.set(0, CUBE_HEIGHT / 2, 0); // 调整位置，使其位于地面中心
 			scene.add(cube);
 
 			// 创建Ammo.js立方体物理体
-			const cubeShape = new Ammo.btBoxShape(new Ammo.btVector3(CUBE_SIZE / 2, CUBE_SIZE / 2, CUBE_SIZE / 2));
+			const cubeShape = new Ammo.btBoxShape(new Ammo.btVector3(CUBE_WIDTH / 2, CUBE_HEIGHT / 2, CUBE_DEPTH / 2));
 			const cubeTransform = new Ammo.btTransform();
 			cubeTransform.setIdentity();
-			cubeTransform.setOrigin(new Ammo.btVector3(0, CUBE_SIZE / 2, 0));
+			cubeTransform.setOrigin(new Ammo.btVector3(0, CUBE_HEIGHT / 2, 0));
 			const cubeMass = 1;
 			const cubeLocalInertia = new Ammo.btVector3(0, 0, 0);
 			cubeShape.calculateLocalInertia(cubeMass, cubeLocalInertia);
@@ -235,14 +237,16 @@
 			const stickGeometry = new THREE.CylinderGeometry(STICK_RADIUS, STICK_RADIUS, STICK_LENGTH);
 			const stickMaterial = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
 			stick = new THREE.Mesh(stickGeometry, stickMaterial);
-			stick.position.set(0, CUBE_SIZE + STICK_LENGTH / 2, 0);
+			stick.position.set(0, CUBE_HEIGHT + STICK_LENGTH / 2, 0);
+			stick.rotation.z = Math.PI;  // 初始角度设为PI
 			scene.add(stick);
 
 			// 创建Ammo.js棍子物理体
 			const stickShape = new Ammo.btCylinderShape(new Ammo.btVector3(STICK_RADIUS, STICK_LENGTH / 2, STICK_RADIUS));
 			const stickTransform = new Ammo.btTransform();
 			stickTransform.setIdentity();
-			stickTransform.setOrigin(new Ammo.btVector3(0, CUBE_SIZE + STICK_LENGTH / 2, 0));
+			stickTransform.setOrigin(new Ammo.btVector3(0, CUBE_HEIGHT + STICK_LENGTH / 2, 0));
+			stickTransform.setRotation(new Ammo.btQuaternion(0, 0, Math.sin(Math.PI / 2), Math.cos(Math.PI / 2)));  // 初始角度设为PI
 
 			const stickMass = 0.01;
 			const stickLocalInertia = new Ammo.btVector3(0, 0, 0);
@@ -260,7 +264,7 @@
 			// 使用D6约束替代点对点约束
 			const frameInA = new Ammo.btTransform();
 			frameInA.setIdentity();
-			frameInA.setOrigin(new Ammo.btVector3(0, CUBE_SIZE / 2, 0));
+			frameInA.setOrigin(new Ammo.btVector3(0, CUBE_HEIGHT / 2, 0));
 
 			const frameInB = new Ammo.btTransform();
 			frameInB.setIdentity();
@@ -275,8 +279,8 @@
 			);
 
 			// 锁定Y轴旋转,允许其他方向运动
-			d6.setAngularLowerLimit(new Ammo.btVector3(-Math.PI / 2, 0, -Math.PI / 2));  // Y轴设为1表示锁定
-			d6.setAngularUpperLimit(new Ammo.btVector3(Math.PI / 2, 0, Math.PI / 2));
+			d6.setAngularLowerLimit(new Ammo.btVector3(-Math.PI, 0, -Math.PI));  // Y轴设为1表示锁定
+			d6.setAngularUpperLimit(new Ammo.btVector3(Math.PI,0, Math.PI));
 
 			// 添加约束到物理世界
 			physicsWorld.addConstraint(d6, true);
@@ -445,22 +449,33 @@
 			};
 		}
 
+		function getStickAngularVelocity() {
+			const angularVelocity = stickBody.getAngularVelocity();
+			return {
+				x: angularVelocity.x(),
+				y: angularVelocity.y(),
+				z: angularVelocity.z()
+			};
+		}
+
 		var pid = new PID();
 
 		function control() {
 			const angle = getStickAngle();
 			const pos = cubeBody.getWorldTransform().getOrigin();
 			const vel = cubeBody.getLinearVelocity();
-			// 更新图表
-			chart.update(clock.getElapsedTime(), angle.x);
+			const angularVel = getStickAngularVelocity();  // 获取摆锤的角速度
 
-			var f = pid.control(angle, pos, vel);
+			// 更新图表
+			chart.update(clock.getElapsedTime(), angle.z);
+
+			var f = pid.control(angle, pos, vel, angularVel);  // 传递角速度
 
 			// 合成控制力
 			const force = new Ammo.btVector3(f.fx, 0, f.fz);
 			cubeBody.applyCentralForce(force);
 
-			console.log('angle:', angle.z, 'pos:', pos.x(), 'vel:', vel.x());
+			console.log('angle:', angle.z, 'pos:', pos.x(), 'vel:', vel.x(), 'angularVel:', angularVel.z);
 		}
 	</script>
 
